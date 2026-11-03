@@ -227,9 +227,11 @@ function vnoise(x, y) { const xi = Math.floor(x), yi = Math.floor(y), xf = x - x
 function fbm(x, y) { return vnoise(x, y) * .6 + vnoise(x * 2.1 + 5, y * 2.1) * .3 + vnoise(x * 4.3, y * 4.3 + 9) * .1; }
 
 const PATH = {};
-function setPath(i) { Object.assign(PATH, { a1: 26 + i * 3.2, f1: .0016 + i * .00012, a2: 8 + i * 1.2, f2: .0043 + i * .0002, s: .09 + i * .007, ay: 8 + i * .6, fy: .0029 + i * .0001 }); }
+function setPath(i) { Object.assign(PATH, { a1: 26 + i * 3.2, f1: .0016 + i * .00012, a2: 8 + i * 1.2, f2: .0043 + i * .0002, s: .28 + i * .015, df: .0025 + i * .0001 }); }
 function pathX(z) { return PATH.a1 * Math.sin(z * PATH.f1) + PATH.a2 * Math.sin(z * PATH.f2 + 1.3); }
-function pathY(z) { return z * PATH.s + PATH.ay * Math.sin(z * PATH.fy + .7); }
+function pathY(z) { return z * PATH.s + PATH.s * .8 / PATH.df * Math.sin(z * PATH.df + .7); }
+function slopeAt(z) { return PATH.s * (1 + .8 * Math.cos(z * PATH.df + .7)); }
+function diveBoost(z) { return .9 + .2 * slopeAt(z) / PATH.s; }
 
 // ---------------------------------------------------------------- renderer / scene
 const canvas = $('c');
@@ -540,7 +542,7 @@ function subAt(dist) { return Math.floor(Math.max(0, dist) / portalInt) % LV.sub
 function visAt(z) { return multi ? LEVELS[LV.subs[subAt(-z)]] : LV; }
 function kitAt(z) { return KITS[visAt(z).kit]; }
 function diffAt(sd) { return clamp(LI / 9 * .75 + clamp(sd / LV.length, 0, 1) * .25, 0, 1); }
-function spdAt(sd) { return LV.speed * (1 + .15 * clamp(sd / LV.length, 0, 1)); }
+function spdAt(sd) { return LV.speed * (1 + .15 * clamp(sd / LV.length, 0, 1)) * diveBoost(-sd); }
 
 // ---------------------------------------------------------------- object helpers
 function addObj(o) { OB.push(o); if (o.mesh) scene.add(o.mesh); return o; }
@@ -725,7 +727,7 @@ function buildEnv() { const es = new THREE.Scene(); const m = new THREE.ShaderMa
 // ---------------------------------------------------------------- level setup
 function setupLevel(i, isDemo) {
   LI = i; LV = LEVELS[i]; multi = !!LV.subs; demo = isDemo; setPath(i);
-  LV.length = Math.round(LV.speed * 1.075 * LEVEL_SECONDS); cpInt = LV.length / 5; portalInt = LV.speed * 1.05 * 30;
+  LV.length = Math.round(LV.speed * 1.075 * 1.1 * LEVEL_SECONDS); cpInt = LV.length / 5; portalInt = LV.speed * 1.05 * 30;
   minY = 4; maxY = LV.ceiling ? LV.ceiling - 5 : 40;
   const g = LV.ground || {}; floorMat.metalness = ceilMat.metalness = g.m || 0; floorMat.roughness = ceilMat.roughness = g.r ?? .95;
   const lq = LV.liquid; if (lq) { liqMat.color.setHex(lq.color); liqMat.emissive.setHex(lq.e || 0); liqMat.emissiveIntensity = lq.ei || 1; liqMat.opacity = lq.op; liqMat.transparent = lq.op < 1; liqMat.metalness = lq.m; liqMat.roughness = lq.r; liqMat.needsUpdate = true; }
@@ -801,7 +803,7 @@ function updateHud() { const prog = clamp(P.dist / LV.length, 0, 1); const sc = 
   const lives = '❤️'.repeat(Math.max(0, P.lives)) + '🖤'.repeat(Math.max(0, 3 - P.lives));
   const key = sc + lives + (prog * 1000 | 0); if (key === lastHud) return; lastHud = key;
   $('score').textContent = sc; $('lives').textContent = lives; $('progFill').style.width = (prog * 100).toFixed(1) + '%';
-  $('pPct').textContent = Math.floor(prog * 100) + '%'; $('pSpd').textContent = Math.round(P.speed * 3.6) + ' km/h'; $('pTime').textContent = fmtTime((LV.length - P.dist) / Math.max(1, P.speed)) + ' left'; }
+  $('pPct').textContent = Math.floor(prog * 100) + '%'; $('pSpd').textContent = Math.round(P.speed * Math.hypot(1, slopeAt(-P.dist)) * 3.6) + ' km/h'; $('pTime').textContent = fmtTime((LV.length - P.dist) / Math.max(1, P.speed)) + ' left'; }
 function show(id, on) { $(id).classList.toggle('hidden', !on); }
 
 // ---------------------------------------------------------------- gameplay events
@@ -854,7 +856,7 @@ function placeCamera(dt, snap) {
   const z = -P.dist, a = snap ? 1 : Math.min(1, dt * 5);
   camOff.x += (P.ox * .82 - camOff.x) * a; camOff.y += (P.oy * .8 + 6.2 - camOff.y) * a;
   const cz = z + 14; camera.position.set(pathX(cz) + camOff.x, pathY(cz) + camOff.y, cz);
-  const lz = z - 30; camera.lookAt(pathX(lz) + P.ox * .95, pathY(lz) + P.oy * .95 - .5, lz);
+  const lz = z - 30; camera.lookAt(pathX(lz) + P.ox * .95, lerp(pathY(lz), pathY(z), .6) + P.oy * .95 - 1.5, lz);
   camera.rotateZ(glider.rotation.z * .25);
   if (shake > 0) { camera.position.x += rand(-1, 1) * shake; camera.position.y += rand(-1, 1) * shake; }
   skyGroup.position.copy(camera.position);
@@ -876,7 +878,7 @@ function update(dt) {
   simT += dt; fallU.t.value = simT;
   const playing = state === 'play';
   const prog = clamp(P.dist / LV.length, 0, 1);
-  let tgt = demo ? LV.speed * .8 : LV.speed * (1 + .15 * prog);
+  let tgt = (demo ? LV.speed * .8 : LV.speed * (1 + .15 * prog)) * diveBoost(-P.dist);
   if (state === 'crash') tgt = 0; if (state === 'done') tgt = LV.speed * .6;
   P.slow = Math.max(0, P.slow - dt * 1.1);
   P.speed += (tgt * (1 - .4 * P.slow) - P.speed) * Math.min(1, dt * (state === 'crash' ? 1.5 : 2));
@@ -888,7 +890,7 @@ function update(dt) {
     if (drag) { const s = Math.min(innerWidth, innerHeight) * .12; ix = clamp((drag.cx - drag.x) / s, -1, 1); iy = clamp(-(drag.cy - drag.y) / s, -1, 1); }
     if (invertY) iy = -iy;
     P.ix += (ix - P.ix) * Math.min(1, dt * 9); P.iy += (iy - P.iy) * Math.min(1, dt * 9);
-    P.vx += (P.ix * maxV - P.vx) * Math.min(1, dt * 4.5); P.vy += (P.iy * maxV * .8 - 1.6 - P.vy) * Math.min(1, dt * 4.5);
+    P.vx += (P.ix * maxV - P.vx) * Math.min(1, dt * 4.5); P.vy += (P.iy * maxV * (P.iy > 0 ? .5 : .9) - 3 - P.vy) * Math.min(1, dt * 4.5);
   } else if (state === 'crash') { P.vy -= 18 * dt; P.vx *= 1 - dt; }
   else { const tx = Math.sin(simT * .45) * 10, ty = (minY + maxY) / 2 + Math.sin(simT * .33) * 6; P.vx = (tx - P.ox) * 1.4; P.vy = (ty - P.oy) * 1.4; }
   P.ox += P.vx * dt; P.oy += P.vy * dt;
@@ -905,7 +907,7 @@ function update(dt) {
   updateGlider(dt);
   shake = Math.max(0, shake - dt * 1.5);
   placeCamera(dt, false);
-  camera.fov = lerp(camera.fov, 66 + (P.speed - 38) * .16 + (playing && P.iy < -.5 ? 3 : 0), Math.min(1, dt * 2)); camera.updateProjectionMatrix();
+  camera.fov = lerp(camera.fov, 66 + (P.speed - 38) * .16 + slopeAt(-P.dist) * 8 + (playing && P.iy < -.5 ? 3 : 0), Math.min(1, dt * 2)); camera.updateProjectionMatrix();
   updateChunks(camera.position.z);
   updateParticles(dt); updateFireworks(dt); updateTrails(false);
   if (VIS.fireworks && Math.random() < dt * 1.3) skyFirework(state === 'play');
